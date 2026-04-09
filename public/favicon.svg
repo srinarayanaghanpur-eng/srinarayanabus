@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <path d="M32 2 L46 20 H62 L46 32 L54 60 L32 50 L10 60 L18 32 L2 20 H18 L32 2 Z" fill="#0d3d91" />
+  <path d="M32 12 L44 28 H56 L44 36 L48 52 L32 44 L16 52 L20 36 L8 28 H20 L32 12 Z" fill="#1347bf" />
+  <text x="32" y="44" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#ffffff" font-weight="700">SRI</text>
+</svg>
