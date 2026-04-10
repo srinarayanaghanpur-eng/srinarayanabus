@@ -885,7 +885,7 @@ export default function BusTracker() {
   if (!user) {
     return (
       <div style={{ fontFamily: "'Segoe UI',sans-serif", background: "#070c18", minHeight: "100vh", color: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
-        <h2 style={{color: '#fff', marginBottom: 30, fontSize: 28, fontWeight: 900}}>Sri Narayana Bus Tracker</h2>
+        <h1 style={{color: '#2563eb', marginBottom: 30, fontSize: 48, fontWeight: 900, letterSpacing: 2}}>BUS REPORT</h1>
         
         <div style={{background: '#1a2a3a', padding: '30px', borderRadius: '12px', maxWidth: '300px', width: '100%', border: '1px solid #334155'}}>
           <div style={{marginBottom: 20}}>
