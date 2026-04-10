@@ -435,6 +435,10 @@ export default function BusTracker() {
   
   const [buses, setBuses] = useState(BUSES);
   const [defaultKm, setDefaultKm] = useState(DEFAULT_DAILY_KM);
+  const [adminPin, setAdminPin] = useState('4927');
+  const [accountantPin, setAccountantPin] = useState('6300');
+  const [newAdminPin, setNewAdminPin] = useState('');
+  const [newAccountantPin, setNewAccountantPin] = useState('');
 
   const [busSettings,   setBusSettings]   = useState(
     buses.reduce((acc, b) => ({ ...acc, [b.label]: { dailyKm: String(DEFAULT_DAILY_KM[b.label] || ""), tankLiters: "" } }), {})
@@ -838,7 +842,7 @@ export default function BusTracker() {
   };
 
   const handleLogin = () => {
-    if (pin === '4927') {
+    if (pin === adminPin) {
       setUser({ role: 'admin' });
       setUserRole('admin');
       setIsAdmin(true);
@@ -846,7 +850,7 @@ export default function BusTracker() {
       setPin('');
       setLoginError('');
       showToast('✅ Logged in as Admin');
-    } else if (pin === '6300') {
+    } else if (pin === accountantPin) {
       setUser({ role: 'accountant' });
       setUserRole('accountant');
       setIsAdmin(false);
@@ -881,9 +885,7 @@ export default function BusTracker() {
   if (!user) {
     return (
       <div style={{ fontFamily: "'Segoe UI',sans-serif", background: "#070c18", minHeight: "100vh", color: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
-        <SriLogo />
-        <hr style={{width: '100%', margin: '20px 0', border: 'none', borderTop: '1px solid #475569'}} />
-        <h2 style={{color: '#fff', marginBottom: 20}}>Sri Narayana High School Bus Tracker</h2>
+        <h2 style={{color: '#fff', marginBottom: 30, fontSize: 28, fontWeight: 900}}>Sri Narayana Bus Tracker</h2>
         
         <div style={{background: '#1a2a3a', padding: '30px', borderRadius: '12px', maxWidth: '300px', width: '100%', border: '1px solid #334155'}}>
           <div style={{marginBottom: 20}}>
@@ -903,12 +905,6 @@ export default function BusTracker() {
           </button>
           
           {loginError && <p style={{color: '#ef4444', marginTop: 10, fontSize: 12, textAlign: 'center'}}>{loginError}</p>}
-          
-          <div style={{marginTop: 20, padding: '12px', background: '#071018', borderRadius: 8, borderLeft: '3px solid #60a5fa', fontSize: 11, color: '#94a3b8'}}>
-            <div style={{fontWeight: 600, color: '#60a5fa', marginBottom: 8}}>📌 PIN Info:</div>
-            <div>Admin PIN: <span style={{color: '#4ade80', fontWeight: 700}}>4927</span></div>
-            <div>Accountant PIN: <span style={{color: '#fbbf24', fontWeight: 700}}>6300</span></div>
-          </div>
         </div>
       </div>
     );
@@ -1741,6 +1737,64 @@ export default function BusTracker() {
           <div style={S.card}>
             <div style={{fontSize: 16, fontWeight: 900, color: "#e2e8f0", marginBottom: 16}}>
               ⚙️ Settings & Data Management
+            </div>
+
+            <div style={{background: "#1a2a3a", padding: 16, borderRadius: 8, border: "1px solid #334155", marginBottom: 16}}>
+              <div style={{fontSize: 14, fontWeight: 800, color: "#e2e8f0", marginBottom: 12}}>🔐 Manage Login PINs</div>
+              
+              <div style={{marginBottom: 16}}>
+                <label style={{color: "#cbd5e1", fontSize: 12, fontWeight: 600}}>Admin PIN (Current: <span style={{color: '#4ade80'}}>{adminPin}</span>)</label>
+                <div style={{display: 'flex', gap: 8, marginTop: 8}}>
+                  <input
+                    type="text"
+                    placeholder="Enter new Admin PIN"
+                    value={newAdminPin}
+                    onChange={e => setNewAdminPin(e.target.value.slice(0, 4))}
+                    style={{flex: 1, padding: 8, borderRadius: 4, border: "1px solid #475569", background: "#0d1525", color: "#e2e8f0"}}
+                  />
+                  <button
+                    onClick={() => {
+                      if (newAdminPin && newAdminPin.length === 4) {
+                        setAdminPin(newAdminPin);
+                        setNewAdminPin('');
+                        showToast('✅ Admin PIN updated!');
+                      } else {
+                        showToast('⚠️ PIN must be 4 digits');
+                      }
+                    }}
+                    style={{...S.btn("#4ade80"), padding: "8px 16px"}}
+                  >
+                    Update
+                  </button>
+                </div>
+              </div>
+
+              <div style={{marginBottom: 16}}>
+                <label style={{color: "#cbd5e1", fontSize: 12, fontWeight: 600}}>Accountant PIN (Current: <span style={{color: '#fbbf24'}}>{accountantPin}</span>)</label>
+                <div style={{display: 'flex', gap: 8, marginTop: 8}}>
+                  <input
+                    type="text"
+                    placeholder="Enter new Accountant PIN"
+                    value={newAccountantPin}
+                    onChange={e => setNewAccountantPin(e.target.value.slice(0, 4))}
+                    style={{flex: 1, padding: 8, borderRadius: 4, border: "1px solid #475569", background: "#0d1525", color: "#e2e8f0"}}
+                  />
+                  <button
+                    onClick={() => {
+                      if (newAccountantPin && newAccountantPin.length === 4) {
+                        setAccountantPin(newAccountantPin);
+                        setNewAccountantPin('');
+                        showToast('✅ Accountant PIN updated!');
+                      } else {
+                        showToast('⚠️ PIN must be 4 digits');
+                      }
+                    }}
+                    style={{...S.btn("#fbbf24"), padding: "8px 16px", color: '#000'}}
+                  >
+                    Update
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div style={{background: "#1a2a3a", padding: 16, borderRadius: 8, border: "1px solid #334155", marginBottom: 16}}>
