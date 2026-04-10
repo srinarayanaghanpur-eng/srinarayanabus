@@ -455,22 +455,26 @@ export default function BusTracker() {
   const [priceError, setPriceError] = useState("");
 
   const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [pin, setPin] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [userRole, setUserRole] = useState(null); // 'admin' or 'accountant'
+
+  // PIN to Role mapping
+  const ROLE_PINS = {
+    '4927': 'admin',
+    '6300': 'accountant'
+  };
   const [visibleEntries, setVisibleEntries] = useState(10); // Lazy load entries
 
-  // Auth state listener
+  // Auth state listener - check localStorage for saved sessions
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      setAuthLoading(false);
-      if (user && user.email === 'shashi.bannu@gmail.com') {
-        setIsAdmin(true);
-      }
-    });
-    return unsubscribe;
+    const savedRole = localStorage.getItem('userRole');
+    if (savedRole) {
+      setUser({ role: savedRole });
+      setUserRole(savedRole);
+    }
+    setAuthLoading(false);
   }, []);
 
   // Load all data from storage: localStorage first, then Firebase sync in background
@@ -833,17 +837,34 @@ export default function BusTracker() {
     showToast("CSV Downloaded!");
   };
 
-  const handleLogin = async () => {
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
+  const handleLogin = () => {
+    if (pin === '4927') {
+      setUser({ role: 'admin' });
+      setUserRole('admin');
+      setIsAdmin(true);
+      localStorage.setItem('userRole', 'admin');
+      setPin('');
       setLoginError('');
-    } catch (error) {
-      setLoginError(error.message);
+      showToast('✅ Logged in as Admin');
+    } else if (pin === '6300') {
+      setUser({ role: 'accountant' });
+      setUserRole('accountant');
+      setIsAdmin(false);
+      localStorage.setItem('userRole', 'accountant');
+      setPin('');
+      setLoginError('');
+      showToast('✅ Logged in as Accountant');
+    } else {
+      setLoginError('Invalid PIN');
     }
   };
 
-  const handleLogout = async () => {
-    await signOut(auth);
+  const handleLogout = () => {
+    setUser(null);
+    setUserRole(null);
+    setIsAdmin(false);
+    localStorage.removeItem('userRole');
+    showToast('Logged out');
   };
 
   if (authLoading) {
@@ -862,11 +883,33 @@ export default function BusTracker() {
       <div style={{ fontFamily: "'Segoe UI',sans-serif", background: "#070c18", minHeight: "100vh", color: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
         <SriLogo />
         <hr style={{width: '100%', margin: '20px 0', border: 'none', borderTop: '1px solid #475569'}} />
-        <h2 style={{color: '#fff', marginBottom: 20}}>Login to Sri Narayana High School Bus Tracker</h2>
-        <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} style={{margin: '10px', padding: '10px', borderRadius: 5, border: 'none', background: '#1e3a5f', color: '#fff'}} />
-        <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} style={{margin: '10px', padding: '10px', borderRadius: 5, border: 'none', background: '#1e3a5f', color: '#fff'}} />
-        <button onClick={handleLogin} style={{margin: '10px', padding: '10px 20px', borderRadius: 5, border: 'none', background: '#2563eb', color: '#fff', cursor: 'pointer'}}>Login</button>
-        {loginError && <p style={{color: 'red', marginTop: 10}}>{loginError}</p>}
+        <h2 style={{color: '#fff', marginBottom: 20}}>Sri Narayana High School Bus Tracker</h2>
+        
+        <div style={{background: '#1a2a3a', padding: '30px', borderRadius: '12px', maxWidth: '300px', width: '100%', border: '1px solid #334155'}}>
+          <div style={{marginBottom: 20}}>
+            <label style={{color: '#cbd5e1', fontSize: 12, fontWeight: 600}}>Enter Your PIN:</label>
+            <input 
+              type="password" 
+              placeholder="Enter PIN" 
+              value={pin} 
+              onChange={(e) => setPin(e.target.value)} 
+              onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+              style={{margin: '12px 0', padding: '12px', borderRadius: 5, border: '1px solid #475569', background: '#0d1525', color: '#fff', width: '100%', boxSizing: 'border-box', fontSize: 16}}
+            />
+          </div>
+          
+          <button onClick={handleLogin} style={{width: '100%', margin: '10px 0', padding: '12px', borderRadius: 5, border: 'none', background: '#2563eb', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 14}}>
+            Login
+          </button>
+          
+          {loginError && <p style={{color: '#ef4444', marginTop: 10, fontSize: 12, textAlign: 'center'}}>{loginError}</p>}
+          
+          <div style={{marginTop: 20, padding: '12px', background: '#071018', borderRadius: 8, borderLeft: '3px solid #60a5fa', fontSize: 11, color: '#94a3b8'}}>
+            <div style={{fontWeight: 600, color: '#60a5fa', marginBottom: 8}}>📌 PIN Info:</div>
+            <div>Admin PIN: <span style={{color: '#4ade80', fontWeight: 700}}>4927</span></div>
+            <div>Accountant PIN: <span style={{color: '#fbbf24', fontWeight: 700}}>6300</span></div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1064,21 +1107,28 @@ export default function BusTracker() {
             </div>
           </div>
           <div>
-            {isAdmin ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
-                <button style={S.aBadge(true)} onClick={() => requireAdmin({ type: "open_admin" })}>Admin</button>
-                <button style={{ ...S.aBadge(false), fontSize: 10 }} onClick={lockAdmin}>Lock</button>
+            <div style={{display: 'flex', alignItems: 'center', gap: 10}}>
+              <div style={{fontSize: 11, color: '#94a3b8', textAlign: 'right'}}>
+                <div style={{color: userRole === 'admin' ? '#4ade80' : '#fbbf24'}}>
+                  {userRole === 'admin' ? '👨‍💼 Admin' : '🧮 Accountant'}
+                </div>
               </div>
-            ) : (
-              <button style={S.aBadge(false)} onClick={() => requireAdmin({ type: "open_admin" })}>Admin Login</button>
-            )}
-            {user && <button onClick={handleLogout} style={{ background: "#1e3a5f", border: "none", color: "#94a3b8", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontWeight: 700, marginLeft: 10, marginTop: 6 }}>Logout</button>}
+              <button onClick={handleLogout} style={{background: '#dc2626', border: 'none', color: '#fff', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontWeight: 700, fontSize: 11}}>
+                Logout
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       <div style={S.tabs}>
-        {TABS.map(t => <button key={t} style={S.tab(tab === t)} onClick={() => setTab(t)}>{t}</button>)}
+        {TABS.map(t => {
+          // Role-based tab access
+          if (userRole === 'accountant' && ['Maintenance', 'Routes', 'Students', 'Fuel Plan', 'Settings'].includes(t)) {
+            return null; // Hide tabs for accountant
+          }
+          return <button key={t} style={S.tab(tab === t)} onClick={() => setTab(t)}>{t}</button>;
+        })}
       </div>
 
       <div style={S.body}>
@@ -1687,7 +1737,7 @@ export default function BusTracker() {
           </div>
         )}
 
-        {isAdmin && tab === "Settings" && (
+        {userRole === 'admin' && tab === "Settings" && (
           <div style={S.card}>
             <div style={{fontSize: 16, fontWeight: 900, color: "#e2e8f0", marginBottom: 16}}>
               ⚙️ Settings & Data Management
