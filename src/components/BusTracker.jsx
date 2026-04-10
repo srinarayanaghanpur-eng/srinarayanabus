@@ -411,7 +411,6 @@ const LineChart = ({ data, color }) => {
 export default function BusTracker() {
   const [tab, setTab]             = useState("Dashboard");
   const [isAdmin, setIsAdmin]     = useState(false);
-  const [adminPin, setAdminPin]   = useState(DEFAULT_PIN);
   const [showPin, setShowPin]     = useState(false);
   const [pinAction, setPinAction] = useState(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
