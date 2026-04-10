@@ -432,6 +432,10 @@ export default function BusTracker() {
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [paidKhataEntries, setPaidKhataEntries] = useState([]);
   const [showKhataPaidHistory, setShowKhataPaidHistory] = useState(false);
+  
+  const [buses, setBuses] = useState(BUSES);
+  const [defaultKm, setDefaultKm] = useState(DEFAULT_DAILY_KM);
+
   const [busSettings,   setBusSettings]   = useState(
     buses.reduce((acc, b) => ({ ...acc, [b.label]: { dailyKm: String(DEFAULT_DAILY_KM[b.label] || ""), tankLiters: "" } }), {})
   );
@@ -449,9 +453,6 @@ export default function BusTracker() {
   const [fetchingPrice, setFetchingPrice] = useState(false);
   const [fetchedPrice,  setFetchedPrice]  = useState(null);
   const [priceError, setPriceError] = useState("");
-
-  const [buses, setBuses] = useState(BUSES);
-  const [defaultKm, setDefaultKm] = useState(DEFAULT_DAILY_KM);
 
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
