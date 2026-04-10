@@ -39,7 +39,7 @@ const getBusDailyKm = (bus, settings, defaultKm) => {
   return defaultKm[bus] || 0;
 };
 
-const getNextFuelEstimate = (bus, settings, dieselEntries, holidays) => {
+const getNextFuelEstimate = (bus, settings, dieselEntries, holidays, defaultKm) => {
   const entries = dieselEntries.filter(e => e.bus === bus).sort((a, b) => b.date.localeCompare(a.date));
   if (!entries.length) return { label: "No previous fuel entry", info: "Save the first diesel record to estimate next fueling." };
   const last = entries[0];
@@ -890,7 +890,7 @@ export default function BusTracker() {
   const totalKmAll   = routeEntries.reduce((s, e) => s + e.km, 0);
   const totalStudents = studentRoutes.reduce((s, r) => s + r.count, 0);
 
-  const dieselEstimate = getNextFuelEstimate(dieselForm.bus, busSettings, dieselEntries, holidays);
+  const dieselEstimate = getNextFuelEstimate(dieselForm.bus, busSettings, dieselEntries, holidays, defaultKm);
   const currentBusDailyKm = getBusDailyKm(dieselForm.bus, busSettings, defaultKm);
 
   const busStats = BUSES.map(({ label, driver }) => {

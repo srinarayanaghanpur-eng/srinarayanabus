@@ -24,6 +24,7 @@ firebase-debug.log
 firestore-debug.log
 *.tmp
 *.swp
+srinarayanabus/
 dist
 dist-ssr
 *.local
