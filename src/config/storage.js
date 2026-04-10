@@ -27,6 +27,9 @@ export const StorageKeys = {
   BUS_SETTINGS: "snhs_bussettings",
   BUSES: "snhs_buses",
   DEFAULT_KM: "snhs_defaultkm",
+  TEACHERS: "snhs_teachers",
+  TEACHER_ATTENDANCE: "snhs_teacher_attendance",
+  TEACHER_SALARIES: "snhs_teacher_salaries",
 };
 
 /**

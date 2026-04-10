@@ -11,10 +11,20 @@ const BUSES = [
   { label: "TG25T0215", driver: "Suresh" },
 ];
 
-const TABS = ["Dashboard", "Diesel", "Maintenance", "Other", "Routes", "Students", "Fuel Plan", "Reports", "Settings"];
+const TABS = ["Dashboard", "Diesel", "Maintenance", "Other", "Routes", "Students", "Fuel Plan", "Reports", "Settings", "Teachers"];
 const DEFAULT_PIN = "1234";
 const DATA_GOV_API_KEY = "YOUR_API_KEY_HERE"; // Get from https://api.data.gov.in/ - search for "Diesel Price" dataset
 const DATA_GOV_RESOURCE = "9e7b9c96-0afe-4d67-9a73-1e55c1c4b8f8";
+
+// Teachers Data
+const DEFAULT_TEACHERS = [
+  { id: "t001", name: "P. Shashidhara Chary", role: "Correspondent", subject: "Administration", salary: 50000, photo: null, pin: "1001" },
+  { id: "t002", name: "P. Swapna Chary", role: "Principal", subject: "Administration", salary: 45000, photo: null, pin: "1002" },
+  { id: "t003", name: "K. Swamy", role: "Teacher", subject: "Mathematics", salary: 30000, photo: null, pin: "1003" },
+];
+
+// School GPS coordinates (approximate) - adjust to your school's location
+const SCHOOL_GPS = { lat: 17.6869, lng: 78.5255, radius: 500 }; // 500 meters radius
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const FULL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -80,6 +90,148 @@ const getNextFuelDate = (lastDate, liters, avgMileage, dailyKm, holidays) => {
     counted++;
   }
   return d.toISOString().split("T")[0];
+};
+
+// ===== TEACHERS UTILITY FUNCTIONS =====
+
+// Photo compression: Convert large images to ~50KB
+const compressImage = (file) => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+        
+        // Scale down to reduce file size
+        const maxWidth = 400;
+        const maxHeight = 400;
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Compress with reduced quality
+        const compressed = canvas.toDataURL("image/jpeg", 0.6);
+        resolve(compressed);
+      };
+    };
+  });
+};
+
+// GPS Verification: Check if user is within school premises
+const verifyGPS = () => {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve({ status: "error", message: "Geolocation not supported" });
+      return;
+    }
+    
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        const distance = getDistance(SCHOOL_GPS.lat, SCHOOL_GPS.lng, latitude, longitude);
+        const inSchool = distance <= SCHOOL_GPS.radius;
+        resolve({ status: "success", inSchool, distance });
+      },
+      (error) => {
+        resolve({ status: "error", message: error.message });
+      }
+    );
+  });
+};
+
+// Calculate distance between two GPS coordinates (Haversine formula)
+const getDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371e3; // Earth's radius in meters
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+// Get current IST time
+const getISTTime = () => {
+  const now = new Date();
+  const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  return istTime;
+};
+
+// Check if teacher is late (after 9:00 AM IST)
+const isTeacherLate = () => {
+  const istTime = getISTTime();
+  const hours = istTime.getHours();
+  const minutes = istTime.getMinutes();
+  const timeInMinutes = hours * 60 + minutes;
+  const nineAMMinutes = 9 * 60;
+  return timeInMinutes > nineAMMinutes;
+};
+
+// Get attendance status based on today's entry
+const getAttendanceStatus = (attendanceRecords, teacherId, date) => {
+  const record = attendanceRecords.find(r => r.teacherId === teacherId && r.date === date);
+  if (!record) return "absent";
+  if (record.status === "present" || record.status === "late") return record.status;
+  return "absent";
+};
+
+// Calculate CL (Casual Leave) based on attendance
+const calculateCL = (attendanceRecords, teacherId, month, year) => {
+  const monthRecords = attendanceRecords.filter(r => {
+    const rDate = new Date(r.date);
+    return rDate.getMonth() === month && rDate.getFullYear() === year && r.teacherId === teacherId;
+  });
+  
+  let fullDayCL = 0;
+  let halfDayCL = 0;
+  let lateCount = 0;
+  
+  monthRecords.forEach(record => {
+    if (record.status === "absent") fullDayCL++;
+    else if (record.status === "late") lateCount++;
+  });
+  
+  // 3+ days late = half day CL
+  if (lateCount >= 3) halfDayCL = 0.5;
+  
+  return { fullDayCL, halfDayCL, lateCount };
+};
+
+// Calculate salary deduction
+const calculateSalaryDeduction = (teacher, attendanceRecords, month, year) => {
+  const { fullDayCL, halfDayCL } = calculateCL(attendanceRecords, teacher.id, month, year);
+  const dailySalary = teacher.salary / 30; // Assuming 30 working days
+  const fullDeduction = fullDayCL * dailySalary;
+  const halfDeduction = halfDayCL * dailySalary * 0.5;
+  const totalDeduction = fullDeduction + halfDeduction;
+  const netSalary = teacher.salary - totalDeduction;
+  
+  return {
+    dailySalary: dailySalary.toFixed(0),
+    fullDayDeduction: fullDeduction.toFixed(0),
+    halfDayDeduction: halfDeduction.toFixed(0),
+    totalDeduction: totalDeduction.toFixed(0),
+    netSalary: netSalary.toFixed(0),
+  };
 };
 
 const generateShareCard = (entry, billImage) => {
@@ -469,6 +621,21 @@ export default function BusTracker() {
     '6300': 'accountant'
   };
   const [visibleEntries, setVisibleEntries] = useState(10); // Lazy load entries
+
+  // ===== TEACHERS STATE =====
+  const [teachers, setTeachers] = useState(DEFAULT_TEACHERS);
+  const [teacherAttendance, setTeacherAttendance] = useState([]);
+  const [teacherSalaries, setTeacherSalaries] = useState({});
+  const [isTeacherMode, setIsTeacherMode] = useState(false);
+  const [loggedInTeacher, setLoggedInTeacher] = useState(null);
+  const [teacherPin, setTeacherPin] = useState('');
+  const [teacherLoginError, setTeacherLoginError] = useState('');
+  const [teacherPhotoRef, setTeacherPhotoRef] = useState(null);
+  const [showTeacherCamera, setShowTeacherCamera] = useState(false);
+  const [teacherAttendanceMonth, setTeacherAttendanceMonth] = useState(new Date().getMonth());
+  const [teacherAttendanceYear, setTeacherAttendanceYear] = useState(new Date().getFullYear());
+  const [showTeacherSalaryReport, setShowTeacherSalaryReport] = useState(false);
+  const [loginMode, setLoginMode] = useState('bus'); // 'bus' or 'teacher' - for main login screen
 
   // Auth state listener - check localStorage for saved sessions
   useEffect(() => {
@@ -870,6 +1037,95 @@ export default function BusTracker() {
     showToast('Logged out');
   };
 
+  // ===== TEACHER HANDLERS  =====
+  const handleTeacherLogin = () => {
+    const teacher = teachers.find(t => t.pin === teacherPin);
+    if (teacher) {
+      setLoggedInTeacher(teacher);
+      setIsTeacherMode(true);
+      setTeacherPin('');
+      setTeacherLoginError('');
+      showToast(`✅ Welcome ${teacher.name}`);
+      localStorage.setItem('loggedInTeacher', JSON.stringify(teacher));
+    } else {
+      setTeacherLoginError('Invalid Teacher PIN');
+    }
+  };
+
+  const handleTeacherLogout = () => {
+    setLoggedInTeacher(null);
+    setIsTeacherMode(false);
+    setTeacherPin('');
+    localStorage.removeItem('loggedInTeacher');
+    showToast('Teacher logged out');
+  };
+
+  const captureTeacherPhoto = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setShowTeacherCamera(false);
+      showToast('🔄 Verifying attendance...');
+
+      // Verify GPS
+      const gpsResult = await verifyGPS();
+      if (!gpsResult.inSchool) {
+        setTeacherLoginError('❌ You must be within school premises to mark attendance');
+        showToast('❌ Not in school premises');
+        return;
+      }
+
+      // Compress photo
+      const compressedPhoto = await compressImage(file);
+      const isLate = isTeacherLate();
+
+      // Create attendance record
+      const attendanceRecord = {
+        id: Date.now().toString(),
+        teacherId: loggedInTeacher.id,
+        teacherName: loggedInTeacher.name,
+        date: TODAY,
+        time: getISTTime().toLocaleString('en-IN'),
+        status: isLate ? 'late' : 'present',
+        photo: compressedPhoto,
+        gpsData: { lat: gpsResult.lat, lng: gpsResult.lng, distance: Math.round(gpsResult.distance) },
+      };
+
+      // Save attendance
+      const updatedAttendance = [...teacherAttendance, attendanceRecord];
+      setTeacherAttendance(updatedAttendance);
+      await storageService.save(StorageKeys.TEACHER_ATTENDANCE, updatedAttendance);
+
+      showToast(`✅ Attendance marked as ${attendanceRecord.status.toUpperCase()}`);
+    } catch (error) {
+      console.error('Photo capture error:', error);
+      showToast('❌ Error processing photo');
+    }
+  };
+
+  // Load teacher attendance from storage
+  useEffect(() => {
+    const loadTeacherData = async () => {
+      const savedAttendance = await storageService.load(StorageKeys.TEACHER_ATTENDANCE);
+      if (savedAttendance) setTeacherAttendance(savedAttendance);
+
+      const savedTeachers = await storageService.load(StorageKeys.TEACHERS);
+      if (savedTeachers) setTeachers(savedTeachers);
+
+      // Check if teacher was previously logged in
+      const savedTeacher = localStorage.getItem('loggedInTeacher');
+      if (savedTeacher) {
+        const teacher = JSON.parse(savedTeacher);
+        if (teachers.find(t => t.id === teacher.id)) {
+          setLoggedInTeacher(teacher);
+          setIsTeacherMode(true);
+        }
+      }
+    };
+    loadTeacherData();
+  }, []);
+
   if (authLoading) {
     return (
       <div style={{ fontFamily: "'Segoe UI',sans-serif", background: "#070c18", minHeight: "100vh", color: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -884,27 +1140,68 @@ export default function BusTracker() {
   if (!user) {
     return (
       <div style={{ fontFamily: "'Segoe UI',sans-serif", background: "#070c18", minHeight: "100vh", color: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
-        <h1 style={{color: '#2563eb', marginBottom: 30, fontSize: 48, fontWeight: 900, letterSpacing: 2}}>BUS REPORT</h1>
+        <h1 style={{color: '#2563eb', marginBottom: 30, fontSize: 48, fontWeight: 900, letterSpacing: 2}}>SRI NARAYANA HIGH SCHOOL</h1>
         
-        <div style={{background: '#1a2a3a', padding: '30px', borderRadius: '12px', maxWidth: '300px', width: '100%', border: '1px solid #334155'}}>
-          <div style={{marginBottom: 20}}>
-            <label style={{color: '#cbd5e1', fontSize: 12, fontWeight: 600}}>Enter Your PIN:</label>
-            <input 
-              type="password" 
-              placeholder="Enter PIN" 
-              value={pin} 
-              onChange={(e) => setPin(e.target.value)} 
-              onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-              style={{margin: '12px 0', padding: '12px', borderRadius: 5, border: '1px solid #475569', background: '#0d1525', color: '#fff', width: '100%', boxSizing: 'border-box', fontSize: 16}}
-            />
-          </div>
-          
-          <button onClick={handleLogin} style={{width: '100%', margin: '10px 0', padding: '12px', borderRadius: 5, border: 'none', background: '#2563eb', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 14}}>
-            Login
+        {/* Login Mode Tabs */}
+        <div style={{display: 'flex', gap: 10, marginBottom: 20}}>
+          <button onClick={() => setLoginMode('bus')} style={{padding: '10px 20px', borderRadius: 6, border: 'none', background: loginMode === 'bus' ? '#2563eb' : '#334155', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 14}}>
+            🚌 Bus Tracker
           </button>
-          
-          {loginError && <p style={{color: '#ef4444', marginTop: 10, fontSize: 12, textAlign: 'center'}}>{loginError}</p>}
+          <button onClick={() => setLoginMode('teacher')} style={{padding: '10px 20px', borderRadius: 6, border: 'none', background: loginMode === 'teacher' ? '#2563eb' : '#334155', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 14}}>
+            👨‍🏫 Teachers
+          </button>
         </div>
+        
+        {/* Bus Tracker Login */}
+        {loginMode === 'bus' && (
+          <div style={{background: '#1a2a3a', padding: '30px', borderRadius: '12px', maxWidth: '300px', width: '100%', border: '1px solid #334155'}}>
+            <div style={{marginBottom: 20}}>
+              <label style={{color: '#cbd5e1', fontSize: 12, fontWeight: 600}}>Enter Your PIN:</label>
+              <input 
+                type="password" 
+                placeholder="Enter PIN" 
+                value={pin} 
+                onChange={(e) => setPin(e.target.value)} 
+                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                style={{margin: '12px 0', padding: '12px', borderRadius: 5, border: '1px solid #475569', background: '#0d1525', color: '#fff', width: '100%', boxSizing: 'border-box', fontSize: 16}}
+              />
+            </div>
+            
+            <button onClick={handleLogin} style={{width: '100%', margin: '10px 0', padding: '12px', borderRadius: 5, border: 'none', background: '#2563eb', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 14}}>
+              Login
+            </button>
+            
+            {loginError && <p style={{color: '#ef4444', marginTop: 10, fontSize: 12, textAlign: 'center'}}>{loginError}</p>}
+          </div>
+        )}
+
+        {/* Teacher  Login */}
+        {loginMode === 'teacher' && (
+          <div style={{background: '#1a2a3a', padding: '30px', borderRadius: '12px', maxWidth: '300px', width: '100%', border: '1px solid #334155'}}>
+            <div style={{marginBottom: 20}}>
+              <label style={{color: '#cbd5e1', fontSize: 12, fontWeight: 600}}>Enter Your PIN:</label>
+              <input 
+                type="password" 
+                placeholder="Enter PIN" 
+                value={teacherPin} 
+                onChange={(e) => setTeacherPin(e.target.value)} 
+                onKeyPress={(e) => e.key === 'Enter' && handleTeacherLogin()}
+                style={{margin: '12px 0', padding: '12px', borderRadius: 5, border: '1px solid #475569', background: '#0d1525', color: '#fff', width: '100%', boxSizing: 'border-box', fontSize: 16}}
+              />
+            </div>
+            
+            <button onClick={handleTeacherLogin} style={{width: '100%', margin: '10px 0', padding: '12px', borderRadius: 5, border: 'none', background: '#2563eb', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 14}}>
+              Login as Teacher
+            </button>
+            
+            {teacherLoginError && <p style={{color: '#ef4444', marginTop: 10, fontSize: 12, textAlign: 'center'}}>{teacherLoginError}</p>}
+            
+            <div style={{marginTop: 16, fontSize: 12, color: '#64748b', background: '#0d1525', padding: 12, borderRadius: 6}}>
+              <div style={{fontWeight: 700, marginBottom: 8}}>Demo Teacher PINs:</div>
+              {teachers.map(t => <div key={t.id}>📌 {t.name}: {t.pin}</div>)}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -916,6 +1213,116 @@ export default function BusTracker() {
           <div style={{ fontSize: 48, marginBottom: 16 }}>⏳</div>
           <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Loading your data...</div>
           <div style={{ fontSize: 12, color: "#475569" }}>Syncing with Firebase & localStorage</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ===== TEACHER MODE INTERFACE =====
+  if (isTeacherMode && loggedInTeacher) {
+    const todayAttendance = teacherAttendance.find(a => a.teacherId === loggedInTeacher.id && a.date === TODAY);
+    const monthAttendance = teacherAttendance.filter(a => {
+      const aDate = new Date(a.date);
+      return a.teacherId === loggedInTeacher.id && aDate.getMonth() === teacherAttendanceMonth && aDate.getFullYear() === teacherAttendanceYear;
+    });
+    const { fullDayCL, halfDayCL, lateCount } = calculateCL(teacherAttendance, loggedInTeacher.id, teacherAttendanceMonth, teacherAttendanceYear);
+    const salaryInfo = calculateSalaryDeduction(loggedInTeacher, teacherAttendance, teacherAttendanceMonth, teacherAttendanceYear);
+
+    return (
+      <div style={{ fontFamily: "'Segoe UI',sans-serif", background: "#070c18", minHeight: "100vh", color: "#f1f5f9", padding: 16 }}>
+        <div style={{ maxWidth: 800, margin: "0 auto" }}>
+          {/* Header */}
+          <div style={{ background: "linear-gradient(135deg,#1e3a8a,#1d4ed8)", borderRadius: 12, padding: 20, marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>Welcome</div>
+              <div style={{ fontSize: 24, fontWeight: 900 }}>{loggedInTeacher.name}</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginTop: 4 }}>{loggedInTeacher.role} • {loggedInTeacher.subject}</div>
+            </div>
+            <button onClick={handleTeacherLogout} style={{ background: "#dc2626", border: "none", color: "#fff", borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontWeight: 700 }}>
+              Logout
+            </button>
+          </div>
+
+          {/* Attendance Status */}
+          <div style={{ background: "#1a2a3a", borderRadius: 12, padding: 20, marginBottom: 20, border: "1px solid #334155" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>📅 Today's Attendance</div>
+            {todayAttendance ? (
+              <div style={{ background: todayAttendance.status === 'present' ? "rgba(34,197,94,0.1)" : "rgba(249,115,22,0.1)", borderRadius: 8, padding: 12, border: `1px solid ${todayAttendance.status === 'present' ? '#22c55e' : '#f97316'}` }}>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Status</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: todayAttendance.status === 'present' ? '#4ade80' : '#fb923c', marginBottom: 8 }}>
+                  {todayAttendance.status === 'present' ? '✅ PRESENT' : '⏰ LATE'}
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>Time: {todayAttendance.time}</div>
+              </div>
+            ) : (
+              <div style={{ background: "rgba(239,68,68,0.1)", borderRadius: 8, padding: 16, border: "1px solid #ef4444", textAlign: "center" }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#f87171", marginBottom: 12 }}>❌ Not Marked</div>
+                <label style={{ display: "block", marginTop: 12 }}>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={captureTeacherPhoto}
+                    style={{ display: "none" }}
+                  />
+                  <div style={{ background: "#2563eb", color: "#fff", padding: "12px 20px", borderRadius: 8, cursor: "pointer", fontWeight: 700, textAlign: "center" }}>
+                    📸 Mark Attendance Now
+                  </div>
+                </label>
+              </div>
+            )}
+          </div>
+
+          {/* Monthly Statistics */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+            <div style={{ background: "#1a2a3a", borderRadius: 12, padding: 16, border: "1px solid #334155" }}>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Working Days</div>
+              <div style={{ fontSize: 24, fontWeight: 900, color: "#60a5fa" }}>{monthAttendance.length}</div>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>Present: {monthAttendance.filter(a => a.status === 'present').length} | Late: {lateCount}</div>
+            </div>
+            <div style={{ background: "#1a2a3a", borderRadius: 12, padding: 16, border: "1px solid #334155" }}>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Casual Leave (CL)</div>
+              <div style={{ fontSize: 24, fontWeight: 900, color: "#f97316" }}>{fullDayCL + halfDayCL}</div>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>Full: {fullDayCL} | Half: {halfDayCL.toFixed(1)}</div>
+            </div>
+          </div>
+
+          {/* Salary Information */}
+          <div style={{ background: "#1a2a3a", borderRadius: 12, padding: 20, marginBottom: 20, border: "1px solid #334155" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>💰 Salary Calculation</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>{<div style={{ fontSize: 12, color: "#94a3b8" }}>Gross Salary</div>}<div style={{ fontSize: 18, fontWeight: 700, color: "#4ade80" }}>{fmt(loggedInTeacher.salary)}</div></div>
+              <div>{<div style={{ fontSize: 12, color: "#94a3b8" }}>Daily Rate</div>}<div style={{ fontSize: 18, fontWeight: 700, color: "#60a5fa" }}>{fmt(salaryInfo.dailySalary)}</div></div>
+              <div>{<div style={{ fontSize: 12, color: "#94a3b8" }}>Full Day Deduction</div>}<div style={{ fontSize: 18, fontWeight: 700, color: "#fb923c" }}>-{fmt(salaryInfo.fullDayDeduction)}</div></div>
+              <div>{<div style={{ fontSize: 12, color: "#94a3b8" }}>Half Day Deduction</div>}<div style={{ fontSize: 18, fontWeight: 700, color: "#fb923c" }}>-{fmt(salaryInfo.halfDayDeduction)}</div></div>
+              <div style={{ gridColumn: "1 / -1", borderTop: "1px solid #334155", paddingTop: 12, marginTop: 12 }}>
+                {<div style={{ fontSize: 12, color: "#94a3b8" }}>Net Salary This Month</div>}
+                <div style={{ fontSize: 24, fontWeight: 900, color: "#34d399" }}>{fmt(salaryInfo.netSalary)}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Attendance Details */}
+          <div style={{ background: "#1a2a3a", borderRadius: 12, padding: 20, border: "1px solid #334155" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>📊 This Month's Attendance</div>
+            {monthAttendance.length > 0 ? (
+              <div style={{ maxHeight: 300, overflowY: "auto" }}>
+                {monthAttendance.map((record, idx) => (
+                  <div key={idx} style={{ background: "#0d1525", borderRadius: 8, padding: 12, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center", borderLeft: `4px solid ${record.status === 'present' ? '#22c55e' : '#f97316'}` }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{fmtDate(record.date)}</div>
+                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{record.time}</div>
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: record.status === 'present' ? '#4ade80' : '#fb923c' }}>
+                      {record.status === 'present' ? '✅ Present' : '⏰ Late'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ color: "#64748b", textAlign: "center", padding: 20 }}>No attendance records this month</div>
+            )}
+          </div>
         </div>
       </div>
     );
