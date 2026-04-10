@@ -459,6 +459,7 @@ export default function BusTracker() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [visibleEntries, setVisibleEntries] = useState(10); // Lazy load entries
 
   // Auth state listener
   useEffect(() => {
