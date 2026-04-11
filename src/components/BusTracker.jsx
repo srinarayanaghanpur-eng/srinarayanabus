@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import storageService, { StorageKeys } from "../config/storage";
 import { auth } from "../config/firebase";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
+import imageCompression from 'browser-image-compression';
 
 const BUSES = [
   { label: "TS25T7838", driver: "D. Ajay" },
@@ -23,8 +24,8 @@ const DEFAULT_TEACHERS = [
   { id: "t003", name: "K. Swamy", role: "Teacher", subject: "Mathematics", salary: 30000, photo: null, pin: "1003" },
 ];
 
-// School GPS coordinates (approximate) - adjust to your school's location
-const SCHOOL_GPS = { lat: 17.6869, lng: 78.5255, radius: 500 }; // 500 meters radius
+// School GPS coordinates (precise location) - adjust to your school's exact location
+const SCHOOL_GPS = { lat: 17.6869, lng: 78.5255, radius: 150 }; // 150 meters radius for campus lock
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const FULL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -94,65 +95,99 @@ const getNextFuelDate = (lastDate, liters, avgMileage, dailyKm, holidays) => {
 
 // ===== TEACHERS UTILITY FUNCTIONS =====
 
-// Photo compression: Convert large images to ~50KB
-const compressImage = (file) => {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target.result;
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        let width = img.width;
-        let height = img.height;
-        
-        // Scale down to reduce file size
-        const maxWidth = 400;
-        const maxHeight = 400;
-        if (width > height) {
-          if (width > maxWidth) {
-            height *= maxWidth / width;
-            width = maxWidth;
+// Image compression: Convert large images to <=100KB with optimized quality
+const compressImage = async (file) => {
+  const options = {
+    maxSizeMB: 0.1, // 100KB
+    maxWidthOrHeight: 800,
+    useWebWorker: true,
+    fileType: 'image/jpeg'
+  };
+
+  try {
+    const compressedFile = await imageCompression(file, options);
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(compressedFile);
+      reader.onload = () => resolve(reader.result);
+    });
+  } catch (error) {
+    console.error('Image compression failed:', error);
+    // Fallback to original compression if library fails
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          let width = img.width;
+          let height = img.height;
+
+          // Scale down to reduce file size
+          const maxWidth = 800;
+          const maxHeight = 800;
+          if (width > height) {
+            if (width > maxWidth) {
+              height *= maxWidth / width;
+              width = maxWidth;
+            }
+          } else {
+            if (height > maxHeight) {
+              width *= maxHeight / height;
+              height = maxHeight;
+            }
           }
-        } else {
-          if (height > maxHeight) {
-            width *= maxHeight / height;
-            height = maxHeight;
-          }
-        }
-        
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-        
-        // Compress with reduced quality
-        const compressed = canvas.toDataURL("image/jpeg", 0.6);
-        resolve(compressed);
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Compress with reduced quality
+          const compressed = canvas.toDataURL("image/jpeg", 0.6);
+          resolve(compressed);
+        };
       };
-    };
-  });
+    });
+  }
 };
 
-// GPS Verification: Check if user is within school premises
-const verifyGPS = () => {
+// GPS Verification: Check if user is within school premises (enhanced)
+const verifyGPS = async () => {
   return new Promise((resolve) => {
     if (!navigator.geolocation) {
       resolve({ status: "error", message: "Geolocation not supported" });
       return;
     }
-    
+
+    const options = {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 300000 // 5 minutes
+    };
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const { latitude, longitude } = position.coords;
+        const { latitude, longitude, accuracy } = position.coords;
         const distance = getDistance(SCHOOL_GPS.lat, SCHOOL_GPS.lng, latitude, longitude);
         const inSchool = distance <= SCHOOL_GPS.radius;
-        resolve({ status: "success", inSchool, distance });
+        resolve({
+          status: "success",
+          inSchool,
+          distance: Math.round(distance),
+          accuracy: Math.round(accuracy),
+          coords: { lat: latitude, lng: longitude }
+        });
       },
       (error) => {
-        resolve({ status: "error", message: error.message });
-      }
+        let message = "Location access denied";
+        if (error.code === error.TIMEOUT) message = "Location timeout - try again";
+        if (error.code === error.POSITION_UNAVAILABLE) message = "Location unavailable";
+        resolve({ status: "error", message });
+      },
+      options
     );
   });
 };
@@ -176,14 +211,18 @@ const getISTTime = () => {
   return istTime;
 };
 
-// Check if teacher is late (after 9:00 AM IST)
-const isTeacherLate = () => {
+// Check if teacher is late (smart attendance rules)
+const getAttendanceStatus = () => {
   const istTime = getISTTime();
   const hours = istTime.getHours();
   const minutes = istTime.getMinutes();
   const timeInMinutes = hours * 60 + minutes;
-  const nineAMMinutes = 9 * 60;
-  return timeInMinutes > nineAMMinutes;
+  const nineAMMinutes = 9 * 60; // 9:00 AM
+  const nineFifteenAMMinutes = 9 * 60 + 15; // 9:15 AM
+
+  if (timeInMinutes < nineAMMinutes) return "present";
+  if (timeInMinutes <= nineFifteenAMMinutes) return "late";
+  return "absent";
 };
 
 // Get attendance status based on today's entry
@@ -634,6 +673,7 @@ export default function BusTracker() {
   const [showTeacherCamera, setShowTeacherCamera] = useState(false);
   const [teacherAttendanceMonth, setTeacherAttendanceMonth] = useState(new Date().getMonth());
   const [teacherAttendanceYear, setTeacherAttendanceYear] = useState(new Date().getFullYear());
+  const [attendanceFilter, setAttendanceFilter] = useState('all'); // 'all', 'present', 'late', 'absent'
   const [showTeacherSalaryReport, setShowTeacherSalaryReport] = useState(false);
   const [loginMode, setLoginMode] = useState('bus'); // 'bus' or 'teacher' - for main login screen
 
@@ -1056,7 +1096,8 @@ export default function BusTracker() {
 
   // ===== TEACHER HANDLERS  =====
   const handleTeacherLogin = () => {
-    const teacher = teachers.find(t => t.pin === teacherPin);
+    const pin = teacherPin.trim();
+    const teacher = teachers.find(t => t.pin === pin);
     if (teacher) {
       setLoggedInTeacher(teacher);
       setIsTeacherMode(true);
@@ -1077,47 +1118,98 @@ export default function BusTracker() {
     showToast('Teacher logged out');
   };
 
+  const sendWhatsAppNotification = async (teacher, attendanceRecord) => {
+    try {
+      // Call Firebase Cloud Function for WhatsApp
+      const { getFunctions, httpsCallable } = await import('firebase/functions');
+      const functions = getFunctions();
+      const sendWhatsApp = httpsCallable(functions, 'sendWhatsAppNotification');
+
+      await sendWhatsApp({
+        teacherId: teacher.id,
+        teacherName: teacher.name,
+        status: attendanceRecord.status,
+        date: attendanceRecord.date,
+        time: attendanceRecord.time
+      });
+
+      console.log('WhatsApp notification sent for absent teacher');
+    } catch (error) {
+      console.error('WhatsApp notification failed:', error);
+      // Don't block attendance flow if WhatsApp fails
+    }
+  };
+
   const captureTeacherPhoto = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Check if already submitted today
+    const todayRecord = teacherAttendance.find(a => a.teacherId === loggedInTeacher.id && a.date === TODAY);
+    if (todayRecord) {
+      setTeacherLoginError('❌ Attendance already marked for today');
+      showToast('❌ Already marked attendance today');
+      return;
+    }
+
     try {
       setShowTeacherCamera(false);
-      showToast('🔄 Verifying attendance...');
+      showToast('🔄 Checking location...');
 
-      // Verify GPS
+      // Step 1: Verify GPS location
       const gpsResult = await verifyGPS();
+      if (gpsResult.status === "error") {
+        setTeacherLoginError(`❌ ${gpsResult.message}`);
+        showToast('❌ Location check failed');
+        return;
+      }
+
       if (!gpsResult.inSchool) {
-        setTeacherLoginError('❌ You must be within school premises to mark attendance');
+        setTeacherLoginError(`❌ You are ${gpsResult.distance}m outside campus area`);
         showToast('❌ Not in school premises');
         return;
       }
 
-      // Compress photo
-      const compressedPhoto = await compressImage(file);
-      const isLate = isTeacherLate();
+      showToast('🔄 Compressing image...');
 
-      // Create attendance record
+      // Step 2: Compress image
+      const compressedPhoto = await compressImage(file);
+
+      // Step 3: Apply smart attendance rules
+      const status = getAttendanceStatus();
+
+      // Step 4: Create attendance record
       const attendanceRecord = {
         id: Date.now().toString(),
         teacherId: loggedInTeacher.id,
         teacherName: loggedInTeacher.name,
         date: TODAY,
         time: getISTTime().toLocaleString('en-IN'),
-        status: isLate ? 'late' : 'present',
+        status: status,
         photo: compressedPhoto,
-        gpsData: { lat: gpsResult.lat, lng: gpsResult.lng, distance: Math.round(gpsResult.distance) },
+        locationData: {
+          lat: gpsResult.coords.lat,
+          lng: gpsResult.coords.lng,
+          distance: gpsResult.distance,
+          accuracy: gpsResult.accuracy
+        },
+        timestamp: new Date().toISOString()
       };
 
-      // Save attendance
+      // Step 5: Save attendance
       const updatedAttendance = [...teacherAttendance, attendanceRecord];
       setTeacherAttendance(updatedAttendance);
       await storageService.save(StorageKeys.TEACHER_ATTENDANCE, updatedAttendance);
 
-      showToast(`✅ Attendance marked as ${attendanceRecord.status.toUpperCase()}`);
+      // Step 6: Trigger WhatsApp for absent only
+      if (status === "absent") {
+        await sendWhatsAppNotification(loggedInTeacher, attendanceRecord);
+      }
+
+      showToast(`✅ Attendance marked as ${status.toUpperCase()}`);
     } catch (error) {
-      console.error('Photo capture error:', error);
-      showToast('❌ Error processing photo');
+      console.error('Attendance capture error:', error);
+      showToast('❌ Error processing attendance');
     }
   };
 
@@ -1156,7 +1248,7 @@ export default function BusTracker() {
     );
   }
 
-  if (!user) {
+  if (!user && !isTeacherMode) {
     return (
       <div style={{ fontFamily: "'Segoe UI',sans-serif", background: "#070c18", minHeight: "100vh", color: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
         <h1 style={{color: '#2563eb', marginBottom: 30, fontSize: 48, fontWeight: 900, letterSpacing: 2}}>SRI NARAYANA HIGH SCHOOL</h1>
@@ -1242,7 +1334,9 @@ export default function BusTracker() {
     const todayAttendance = teacherAttendance.find(a => a.teacherId === loggedInTeacher.id && a.date === TODAY);
     const monthAttendance = teacherAttendance.filter(a => {
       const aDate = new Date(a.date);
-      return a.teacherId === loggedInTeacher.id && aDate.getMonth() === teacherAttendanceMonth && aDate.getFullYear() === teacherAttendanceYear;
+      const matchesDate = a.teacherId === loggedInTeacher.id && aDate.getMonth() === teacherAttendanceMonth && aDate.getFullYear() === teacherAttendanceYear;
+      const matchesFilter = attendanceFilter === 'all' || a.status === attendanceFilter;
+      return matchesDate && matchesFilter;
     });
     const { fullDayCL, halfDayCL, lateCount } = calculateCL(teacherAttendance, loggedInTeacher.id, teacherAttendanceMonth, teacherAttendanceYear);
     const salaryInfo = calculateSalaryDeduction(loggedInTeacher, teacherAttendance, teacherAttendanceMonth, teacherAttendanceYear);
@@ -1324,6 +1418,14 @@ export default function BusTracker() {
           {/* Attendance Details */}
           <div style={{ background: "#1a2a3a", borderRadius: 12, padding: 20, border: "1px solid #334155" }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>📊 This Month's Attendance</div>
+
+            {/* Filter Controls */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+              <button onClick={() => setAttendanceFilter('all')} style={{ padding: '8px 16px', borderRadius: 20, border: 'none', background: attendanceFilter === 'all' ? '#2563eb' : '#334155', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>All ({teacherAttendance.filter(a => { const aDate = new Date(a.date); return a.teacherId === loggedInTeacher.id && aDate.getMonth() === teacherAttendanceMonth && aDate.getFullYear() === teacherAttendanceYear; }).length})</button>
+              <button onClick={() => setAttendanceFilter('present')} style={{ padding: '8px 16px', borderRadius: 20, border: 'none', background: attendanceFilter === 'present' ? '#22c55e' : '#334155', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Present ({monthAttendance.filter(a => a.status === 'present').length})</button>
+              <button onClick={() => setAttendanceFilter('late')} style={{ padding: '8px 16px', borderRadius: 20, border: 'none', background: attendanceFilter === 'late' ? '#f97316' : '#334155', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Late ({monthAttendance.filter(a => a.status === 'late').length})</button>
+              <button onClick={() => setAttendanceFilter('absent')} style={{ padding: '8px 16px', borderRadius: 20, border: 'none', background: attendanceFilter === 'absent' ? '#ef4444' : '#334155', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Absent ({monthAttendance.filter(a => a.status === 'absent').length})</button>
+            </div>
             {monthAttendance.length > 0 ? (
               <div style={{ maxHeight: 300, overflowY: "auto" }}>
                 {monthAttendance.map((record, idx) => (
@@ -1341,6 +1443,55 @@ export default function BusTracker() {
             ) : (
               <div style={{ color: "#64748b", textAlign: "center", padding: 20 }}>No attendance records this month</div>
             )}
+          </div>
+
+          {/* Monthly Calendar View */}
+          <div style={{ background: "#1a2a3a", borderRadius: 12, padding: 20, border: "1px solid #334155" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>📅 Monthly Calendar</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 16 }}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                <div key={day} style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", textAlign: "center", padding: 8 }}>{day}</div>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+              {(() => {
+                const firstDay = new Date(teacherAttendanceYear, teacherAttendanceMonth, 1).getDay();
+                const daysInMonth = new Date(teacherAttendanceYear, teacherAttendanceMonth + 1, 0).getDate();
+                const days = [];
+
+                // Empty cells for days before first day of month
+                for (let i = 0; i < firstDay; i++) {
+                  days.push(<div key={`empty-${i}`} style={{ padding: 8 }}></div>);
+                }
+
+                // Days of the month
+                for (let day = 1; day <= daysInMonth; day++) {
+                  const dateStr = `${teacherAttendanceYear}-${String(teacherAttendanceMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                  const record = teacherAttendance.find(a => a.teacherId === loggedInTeacher.id && a.date === dateStr);
+                  const status = record?.status;
+
+                  days.push(
+                    <div key={day} style={{
+                      padding: 8,
+                      textAlign: "center",
+                      borderRadius: 6,
+                      background: status === 'present' ? 'rgba(34,197,94,0.2)' : status === 'late' ? 'rgba(249,115,22,0.2)' : status === 'absent' ? 'rgba(239,68,68,0.2)' : '#0d1525',
+                      border: status ? '1px solid rgba(255,255,255,0.1)' : 'none',
+                      color: status ? '#e2e8f0' : '#64748b',
+                      fontSize: 12,
+                      fontWeight: status ? 600 : 400
+                    }}>
+                      {day}
+                      {status && <div style={{ fontSize: 8, marginTop: 2 }}>
+                        {status === 'present' ? '✓' : status === 'late' ? '⏰' : '✗'}
+                      </div>}
+                    </div>
+                  );
+                }
+
+                return days;
+              })()}
+            </div>
           </div>
         </div>
       </div>
