@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import storageService, { StorageKeys } from "../config/storage";
 import { auth } from "../config/firebase";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
@@ -695,6 +695,19 @@ export default function BusTracker() {
 
       const pke = parseLocal("paidKhataEntries");
       if (pke) setPaidKhataEntries(pke);
+
+      // Load teachers data
+      const t = parseLocal(StorageKeys.TEACHERS);
+      if (t) setTeachers(t);
+      else setTeachers(DEFAULT_TEACHERS);
+
+      // Load teacher attendance
+      const ta = parseLocal(StorageKeys.TEACHER_ATTENDANCE);
+      if (ta) setTeacherAttendance(ta);
+
+      // Load teacher salaries
+      const ts = parseLocal(StorageKeys.TEACHER_SALARIES);
+      if (ts) setTeacherSalaries(ts);
     };
 
     const syncFirebaseData = async () => {
@@ -711,6 +724,9 @@ export default function BusTracker() {
         if (all[StorageKeys.BUS_SETTINGS]) setBusSettings(all[StorageKeys.BUS_SETTINGS]);
         if (all[StorageKeys.BUSES]) setBuses(all[StorageKeys.BUSES]);
         if (all[StorageKeys.DEFAULT_KM]) setDefaultKm(all[StorageKeys.DEFAULT_KM]);
+        if (all[StorageKeys.TEACHERS]) setTeachers(all[StorageKeys.TEACHERS]);
+        if (all[StorageKeys.TEACHER_ATTENDANCE]) setTeacherAttendance(all[StorageKeys.TEACHER_ATTENDANCE]);
+        if (all[StorageKeys.TEACHER_SALARIES]) setTeacherSalaries(all[StorageKeys.TEACHER_SALARIES]);
         showToast("📱 Firebase sync completed");
       } catch (error) {
         console.warn("Firebase sync failed:", error);
@@ -957,11 +973,12 @@ export default function BusTracker() {
     const cashTotal = dieselEntries.filter(e => e.paymentMethod === "Cash").reduce((sum, e) => sum + (e.total || 0), 0);
     const upiTotal = dieselEntries.filter(e => e.paymentMethod === "UPI").reduce((sum, e) => sum + (e.total || 0), 0);
     const khataTotal = dieselEntries.filter(e => e.paymentMethod === "Khata").reduce((sum, e) => sum + (e.total || 0), 0);
+    const isFirebaseAvailable = storageService.isFirebaseAvailable();
     
     const rows = [
       ["Sri Narayana High School Bus Tracker Report"],
       ["Generated On", TODAY],
-      ["Firebase Status", firebaseAvailable ? "Connected" : "Not configured"],
+      ["Firebase Status", isFirebaseAvailable ? "Connected" : "Not configured"],
       [],
       ["ACCOUNT SUMMARY"],
       ["Account","Total Amount","Status"],
@@ -1111,13 +1128,15 @@ export default function BusTracker() {
       if (savedAttendance) setTeacherAttendance(savedAttendance);
 
       const savedTeachers = await storageService.load(StorageKeys.TEACHERS);
+      const teachersData = savedTeachers || DEFAULT_TEACHERS;
       if (savedTeachers) setTeachers(savedTeachers);
 
       // Check if teacher was previously logged in
       const savedTeacher = localStorage.getItem('loggedInTeacher');
       if (savedTeacher) {
         const teacher = JSON.parse(savedTeacher);
-        if (teachers.find(t => t.id === teacher.id)) {
+        // Use loaded teachersData instead of closure state
+        if (teachersData.find(t => t.id === teacher.id)) {
           setLoggedInTeacher(teacher);
           setIsTeacherMode(true);
         }
@@ -1328,17 +1347,17 @@ export default function BusTracker() {
     );
   }
 
-  const totalDiesel  = dieselEntries.reduce((s, e) => s + e.total, 0);
-  const totalMaint   = maintEntries.reduce((s, e) => s + e.amount, 0);
-  const totalOther   = otherEntries.reduce((s, e) => s + e.amount, 0);
-  const grandTotal   = totalDiesel + totalMaint + totalOther;
-  const totalKmAll   = routeEntries.reduce((s, e) => s + e.km, 0);
-  const totalStudents = studentRoutes.reduce((s, r) => s + r.count, 0);
+  const totalDiesel  = useMemo(() => dieselEntries.reduce((s, e) => s + e.total, 0), [dieselEntries]);
+  const totalMaint   = useMemo(() => maintEntries.reduce((s, e) => s + e.amount, 0), [maintEntries]);
+  const totalOther   = useMemo(() => otherEntries.reduce((s, e) => s + e.amount, 0), [otherEntries]);
+  const grandTotal   = useMemo(() => totalDiesel + totalMaint + totalOther, [totalDiesel, totalMaint, totalOther]);
+  const totalKmAll   = useMemo(() => routeEntries.reduce((s, e) => s + e.km, 0), [routeEntries]);
+  const totalStudents = useMemo(() => studentRoutes.reduce((s, r) => s + r.count, 0), [studentRoutes]);
 
-  const dieselEstimate = getNextFuelEstimate(dieselForm.bus, busSettings, dieselEntries, holidays, defaultKm);
-  const currentBusDailyKm = getBusDailyKm(dieselForm.bus, busSettings, defaultKm);
+  const dieselEstimate = useMemo(() => getNextFuelEstimate(dieselForm.bus, busSettings, dieselEntries, holidays, defaultKm), [dieselForm.bus, busSettings, dieselEntries, holidays, defaultKm]);
+  const currentBusDailyKm = useMemo(() => getBusDailyKm(dieselForm.bus, busSettings, defaultKm), [dieselForm.bus, busSettings, defaultKm]);
 
-  const busStats = BUSES.map(({ label, driver }) => {
+  const busStats = useMemo(() => BUSES.map(({ label, driver }) => {
     const de = dieselEntries.filter(e => e.bus === label);
     const mileageArr = de.filter(e => e.mileage);
     return {
@@ -1352,9 +1371,9 @@ export default function BusTracker() {
       avgMileage: mileageArr.length ? (mileageArr.reduce((s, e) => s + parseFloat(e.mileage), 0) / mileageArr.length).toFixed(1) : null,
       lastDiesel: de.sort((a, b) => b.date.localeCompare(a.date))[0] || null,
     };
-  });
+  }), [dieselEntries, maintEntries, otherEntries, routeEntries, studentRoutes]);
 
-  const fuelPredictions = busStats.map(b => {
+  const fuelPredictions = useMemo(() => busStats.map(b => {
     const settings = busSettings[b.label] || {};
     const dailyKm = parseFloat(settings.dailyKm) || 0;
     if (!b.lastDiesel || !b.avgMileage || !dailyKm) return { ...b, nextFuelDate: null, daysLeft: null, urgency: "unknown", dailyKm };
@@ -1363,10 +1382,10 @@ export default function BusTracker() {
     const dl = nextDate ? daysUntil(nextDate) : null;
     const urgency = dl === null ? "unknown" : dl <= 1 ? "critical" : dl <= 3 ? "warning" : "ok";
     return { ...b, nextFuelDate: nextDate, daysLeft: dl, urgency, dailyKm };
-  });
+  }), [busStats, busSettings, holidays]);
 
   const monthKey = e => { const d = new Date(e.date); return { m: d.getMonth(), y: d.getFullYear() }; };
-  const monthlyData = Array.from({ length: 6 }, (_, i) => {
+  const monthlyData = useMemo(() => Array.from({ length: 6 }, (_, i) => {
     const d = new Date(reportYear, reportMonth - i, 1);
     const m = d.getMonth(), y = d.getFullYear();
     const f = e => { const k = monthKey(e); return k.m === m && k.y === y; };
@@ -1374,13 +1393,13 @@ export default function BusTracker() {
     const maint  = maintEntries.filter(f).reduce((s, e) => s + e.amount, 0);
     const other  = otherEntries.filter(f).reduce((s, e) => s + e.amount, 0);
     return { label: MONTHS[m], month: m, year: y, diesel, maint, other, total: diesel + maint + other };
-  }).reverse();
+  }).reverse(), [reportYear, reportMonth, dieselEntries, maintEntries, otherEntries]);
 
   const selFilter = e => { const k = monthKey(e); return k.m === reportMonth && k.y === reportYear; };
-  const selDiesel = dieselEntries.filter(selFilter).reduce((s, e) => s + e.total, 0);
-  const selMaint  = maintEntries.filter(selFilter).reduce((s, e) => s + e.amount, 0);
-  const selOther  = otherEntries.filter(selFilter).reduce((s, e) => s + e.amount, 0);
-  const chartData = dieselEntries.filter(e => e.bus === chartBus && e.mileage).slice(0, 8).reverse().map((e, i) => ({ x: i, y: parseFloat(e.mileage) }));
+  const selDiesel = useMemo(() => dieselEntries.filter(selFilter).reduce((s, e) => s + e.total, 0), [dieselEntries, reportMonth, reportYear]);
+  const selMaint  = useMemo(() => maintEntries.filter(selFilter).reduce((s, e) => s + e.amount, 0), [maintEntries, reportMonth, reportYear]);
+  const selOther  = useMemo(() => otherEntries.filter(selFilter).reduce((s, e) => s + e.amount, 0), [otherEntries, reportMonth, reportYear]);
+  const chartData = useMemo(() => dieselEntries.filter(e => e.bus === chartBus && e.mileage).slice(0, 8).reverse().map((e, i) => ({ x: i, y: parseFloat(e.mileage) })), [dieselEntries, chartBus]);
   const navMonth = dir => { let m = reportMonth + dir, y = reportYear; if (m > 11) { m = 0; y++; } else if (m < 0) { m = 11; y--; } setReportMonth(m); setReportYear(y); };
 
   const firebaseAvailable = storageService.isFirebaseAvailable();
